@@ -132,6 +132,13 @@ pub enum Terminator {
         /// If `None`, UB will be raised when the intrinsic returns.
         next_block: Option<BbName>,
     },
+    /// Tail call the given function with the given arguments, letting it return
+    /// to the caller instead of the current function.
+    Become {
+        callee: ValueExpr,
+        /// The arguments to pass, and which ABIs to use for that.
+        arguments: List<(ValueExpr, ArgAbi)>,
+    },
     /// Return from the current function.
     Return,
 }

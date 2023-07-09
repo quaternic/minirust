@@ -525,6 +525,82 @@ impl<M: Memory> Machine<M> {
 Note that the content of the arguments is entirely controlled by the caller.
 The callee should probably start with a bunch of `Finalize` statements to ensure that all these arguments match the type the callee thinks they should have.
 
+### Become
+
+```rust
+impl<M: Memory> Machine<M> {
+    fn eval_terminator(&mut self, Terminator::Become { callee, arguments }: Terminator) -> NdResult {
+        // Evaluate the function that will be called.
+        let (Value::Ptr(ptr), _) = self.eval_value(callee)? else {
+            panic!("call on a non-pointer")
+        };
+
+        let func = self.fn_from_addr(ptr.addr)?;
+
+        let mut locals: Map<LocalName, Place<M>> = Map::new();
+
+        // If the new function may return, it needs the right ABI.
+        if let Some((callee_ret_local, callee_ret_abi)) = func.ret {
+            let old_frame = self.cur_frame();
+            let Some((caller_ret_local, caller_ret_abi)) = old_frame.func.ret else {
+                throw_ub!("non-returning function cannot become a function that may return");
+            };
+            if caller_ret_abi != callee_ret_abi {
+                throw_ub!("call ABI violation: return ABI does not agree");
+            }
+            // and pass the return place as its first local
+            locals.insert(callee_ret_local, old_frame.locals[caller_ret_local]);
+        }
+
+        // Evaluate all arguments and put them into fresh places
+        // to initialize the local variable assignment.
+        if func.args.len() != arguments.len() {
+            throw_ub!("call ABI violation: number of arguments does not agree");
+        }
+        for ((local, callee_abi), (arg, caller_abi)) in func.args.zip(arguments) {
+            if caller_abi != callee_abi {
+                throw_ub!("call ABI violation: argument ABI does not agree");
+            }
+            let (val, caller_ty) = self.eval_value(arg)?;
+            let callee_layout = func.locals[local].layout::<M>();
+            // Allocate place with callee layout (a lot like `StorageLive`).
+            let p = self.mem.allocate(callee_layout.size, callee_layout.align)?;
+            // Store value with caller type (otherwise we could get panics).
+            // The ABI above should ensure that this does not go OOB,
+            // and it is a fresh pointer so there should be no other reason this can fail.
+            self.mem.typed_store(Atomicity::None, p, val, PlaceType::new(caller_ty, callee_layout.align)).unwrap();
+            locals.insert(local, p);
+        }
+
+        // Replace the current stack frame with that of the new function.
+        let old_frame = self.mutate_cur_stack(
+            |stack| {
+                let old_frame = stack.pop().unwrap();
+                // Push new stack frame, so it is executed next.
+                stack.push(StackFrame {
+                    func,
+                    locals,
+                    caller_return_info: old_frame.caller_return_info,
+                    next_block: func.start,
+                    next_stmt: Int::ZERO,
+                });
+                old_frame
+            }
+        );
+
+        // Deallocate old locals, except possible return place which was given to the next function.
+        let ret_local = old_frame.func.ret.map(|x| x.0);
+        for (local, place) in old_frame.locals.into_iter().filter(|x| Some(x.0) != ret_local) {
+            // A lot like `StorageDead`.
+            let layout = old_frame.func.locals[local].layout::<M>();
+            self.mem.deallocate(place, layout.size, layout.align)?;
+        }
+
+        ret(())
+    }
+}
+```
+
 ### Return
 
 ```rust

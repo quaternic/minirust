@@ -411,6 +411,16 @@ impl Terminator {
                     None => list![],
                 }
             }
+            Become { callee, arguments } => {
+                let ty = callee.check_wf::<M>(live_locals, prog)?;
+                ensure(matches!(ty, Type::Ptr(PtrType::FnPtr)))?;
+
+                // Argument expressions must all typecheck with some type.
+                for (arg, _abi) in arguments {
+                    arg.check_wf::<M>(live_locals, prog)?;
+                }
+                list![]
+            }
             Return => {
                 list![]
             }

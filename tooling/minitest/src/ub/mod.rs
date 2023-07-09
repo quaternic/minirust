@@ -23,3 +23,4 @@ mod locks;
 mod atomic;
 mod compare_exchange;
 mod data_race;
+mod tailcall;

@@ -192,6 +192,22 @@ fn fmt_terminator(t: Terminator, comptypes: &mut Vec<CompType>) -> String {
             let ret = ret.map(|(place_expr, _arg_abi)| place_expr);
             fmt_call(&callee, arguments, ret, next_block, comptypes)
         }
+        Terminator::Become {
+            callee,
+            arguments,
+        } => {
+            // FIXME since the corresponding syntax does not exist yet in rustc,
+            // for the time being there is no support for parsing this Terminator
+            // so this is just a placeholder to produce some readable output
+            let callee = fmt_value_expr(callee, comptypes).to_atomic_string();
+            let args: Vec<String> = arguments.iter()
+                .map(|(expr, _arg_abi)| expr)
+                .map(|x| fmt_value_expr(x, comptypes).to_string())
+                .collect();
+            let args = args.join(", ");
+
+            format!("    become {callee}({args});")
+        }
         Terminator::Return => {
             format!("    return;")
         }
