@@ -55,6 +55,35 @@ pub(super) fn fmt_place_expr(p: PlaceExpr, comptypes: &mut Vec<CompType>) -> Fmt
         }
     }
 }
+pub(super) fn fmt_call_expr(call: CallExpr, comptypes: &mut Vec<CompType>) -> String {
+    let callee = match call.callee {
+        CallTarget::Intrinsic(intrinsic) => {
+            match intrinsic {
+                Intrinsic::Exit => "exit",
+                Intrinsic::PrintStdout => "print",
+                Intrinsic::PrintStderr => "eprint",
+                Intrinsic::Allocate => "allocate",
+                Intrinsic::Deallocate => "deallocate",
+                Intrinsic::Spawn => "spawn",
+                Intrinsic::Join => "join",
+                Intrinsic::AtomicWrite => "atomic-write",
+                Intrinsic::AtomicRead => "atomic-read",
+                Intrinsic::CompareExchange => "compare-exchange",
+                Intrinsic::Lock(LockIntrinsic::Acquire) => "lock-acquire",
+                Intrinsic::Lock(LockIntrinsic::Create) => "lock-create",
+                Intrinsic::Lock(LockIntrinsic::Release) => "lock-release",
+            }.to_string()
+        }
+        CallTarget::Function(expr) => fmt_value_expr(expr, comptypes).to_atomic_string(),
+    };
+
+    let args: Vec<String> = call.arguments.iter()
+        .map(|(expr, _arg_abi)| expr)
+        .map(|x| fmt_value_expr(x, comptypes).to_string())
+        .collect();
+    let args = args.join(", ");
+    format!("{callee}({args})")
+}
 
 pub(super) fn fmt_local_name(l: LocalName) -> String {
     let id = l.0.get_internal();

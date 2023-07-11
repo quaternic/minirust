@@ -198,9 +198,30 @@ impl<M: Memory> Machine<M> {
 
         ret(func)
     }
+
+    fn deallocate_locals(&mut self, frame: StackFrame<M>) -> NdResult<Option<CallerReturnInfo<M>>> {
+        for (local, place) in frame.locals {
+            let layout = frame.func.locals[local].layout::<M>();
+            self.mem.deallocate(place, layout.size, layout.align)?;
+        }
+        ret(frame.caller_return_info)
+    }
 }
 
 impl<M: Memory> StackFrame<M> {
+    fn new(
+        func: Function,
+        locals: Map<LocalName, Place<M>>,
+        caller_return_info: Option<CallerReturnInfo<M>>,
+    ) -> Self  {
+        Self {
+            func,
+            locals,
+            caller_return_info,
+            next_block: func.start,
+            next_stmt: Int::ZERO,
+        }
+    }
     /// jump to the beginning of the given block.
     fn jump_to_block(&mut self, b: BbName) {
         self.next_block = b;
@@ -219,13 +240,7 @@ impl<M: Memory> Thread<M> {
         // no return value and no arguments.
         // For any other threads, the spawn intrinsic ensures
         // that the func has no arguments.
-        let init_frame = StackFrame {
-            func,
-            locals: Map::new(),
-            caller_return_info: None,
-            next_block: func.start,
-            next_stmt: Int::ZERO,
-        };
+        let init_frame = StackFrame::new(func, Map::new(), None);
 
         Self {
             state: ThreadState::Enabled,

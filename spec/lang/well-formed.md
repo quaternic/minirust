@@ -311,6 +311,23 @@ impl PlaceExpr {
         })
     }
 }
+
+impl CallExpr {
+    fn check_wf<M: Memory>(self, locals: Map<LocalName, PlaceType>, prog: Program) -> Option<() /*FIXME*/> {
+        if let CallTarget::Function(callee) = self.callee {
+
+            let ty = callee.check_wf::<M>(locals, prog)?;
+            ensure(matches!(ty, Type::Ptr(PtrType::FnPtr)))?;
+        }
+
+        // Argument expressions must all typecheck with some type.
+        for (arg, _abi) in self.arguments {
+            arg.check_wf::<M>(locals, prog)?;
+        }
+        ret(())
+    }
+}
+
 ```
 
 ## Well-formed functions and programs
@@ -379,13 +396,11 @@ impl Terminator {
                 list![]
             }
             Call { callee, arguments, ret, next_block } => {
-                let ty = callee.check_wf::<M>(live_locals, prog)?;
-                ensure(matches!(ty, Type::Ptr(PtrType::FnPtr)))?;
-
-                // Argument and return expressions must all typecheck with some type.
-                for (arg, _abi) in arguments {
-                    arg.check_wf::<M>(live_locals, prog)?;
-                }
+                let call_expr = CallExpr {
+                    callee: CallTarget::Function(callee),
+                    arguments
+                };
+                call_expr.check_wf::<M>(live_locals, prog)?;
 
                 if let Some((ret_place, _ret_abi)) = ret {
                     ret_place.check_wf::<M>(live_locals, prog)?;
@@ -412,13 +427,11 @@ impl Terminator {
                 }
             }
             Become { callee, arguments } => {
-                let ty = callee.check_wf::<M>(live_locals, prog)?;
-                ensure(matches!(ty, Type::Ptr(PtrType::FnPtr)))?;
-
-                // Argument expressions must all typecheck with some type.
-                for (arg, _abi) in arguments {
-                    arg.check_wf::<M>(live_locals, prog)?;
-                }
+                let call_expr = CallExpr {
+                    callee: CallTarget::Function(callee),
+                    arguments
+                };
+                call_expr.check_wf::<M>(live_locals, prog)?;
                 list![]
             }
             Return => {

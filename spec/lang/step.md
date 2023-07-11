@@ -456,66 +456,24 @@ impl<M: Memory> Machine<M> {
         &mut self,
         Terminator::Call { callee, arguments, ret: ret_expr, next_block }: Terminator
     ) -> NdResult {
-        let mut locals: Map<LocalName, Place<M>> = Map::new();
+        let call_expr = CallExpr { callee: CallTarget::Function(callee), arguments };
 
         // First evaluate the return place and remember it for `Return`. (Left-to-right!)
-        let ret_place = ret_expr.try_map(|(caller_ret_place, _abi)| {
-            self.eval_place(caller_ret_place)
-        })?;
+        let ret_place = ret_expr.try_map(|(expr, _abi)| self.eval_place(expr))?;
 
-        // Then evaluate the function that will be called.
-        let (Value::Ptr(ptr), _) = self.eval_value(callee)? else {
-            panic!("call on a non-pointer")
-        };
+        // Evaluate the function and its arguments
+        let (func, mut locals) = self.eval_call_expr(call_expr)?;
 
-        let func = self.fn_from_addr(ptr.addr)?;
-
-        // Create place for return local, if needed.
-        if let Some((ret_local, _abi)) = func.ret {
-            let callee_ret_layout = func.locals[ret_local].layout::<M>();
-            locals.insert(ret_local, self.mem.allocate(callee_ret_layout.size, callee_ret_layout.align)?);
-        }
-
-        // Check ABI compatibility.
-        if let (Some((_, caller_ret_abi)), Some((_, callee_ret_abi))) = (ret_expr, func.ret) {
-            if caller_ret_abi != callee_ret_abi {
-                throw_ub!("call ABI violation: return ABI does not agree");
-            }
-        } else {
-            // FIXME: Can we truly accept any caller/callee ABI if the other respective ABI is missing?
-        }
-
-        // Evaluate all arguments and put them into fresh places,
-        // to initialize the local variable assignment.
-        if func.args.len() != arguments.len() {
-            throw_ub!("call ABI violation: number of arguments does not agree");
-        }
-        for ((local, callee_abi), (arg, caller_abi)) in func.args.zip(arguments) {
-            let (val, caller_ty) = self.eval_value(arg)?;
-            let callee_layout = func.locals[local].layout::<M>();
-            if caller_abi != callee_abi {
-                throw_ub!("call ABI violation: argument ABI does not agree");
-            }
-            // Allocate place with callee layout (a lot like `StorageLive`).
-            let p = self.mem.allocate(callee_layout.size, callee_layout.align)?;
-            // Store value with caller type (otherwise we could get panics).
-            // The ABI above should ensure that this does not go OOB,
-            // and it is a fresh pointer so there should be no other reason this can fail.
-            self.mem.typed_store(Atomicity::None, p, val, PlaceType::new(caller_ty, callee_layout.align)).unwrap();
-            locals.insert(local, p);
-        }
+        // If the new function can return, give it the evaluated return place
+        self.prepare_return(
+            &mut locals,
+            func,
+            ret_expr.map(|(_, abi)| (abi, move || ret_place.unwrap().0))
+        )?;
 
         // Push new stack frame, so it is executed next.
-        self.mutate_cur_stack(|stack| stack.push(StackFrame {
-            func,
-            locals,
-            caller_return_info: Some(CallerReturnInfo {
-                next_block,
-                ret_place,
-            }),
-            next_block: func.start,
-            next_stmt: Int::ZERO,
-        }));
+        let frame = StackFrame::new(func, locals, Some(CallerReturnInfo { next_block, ret_place }));
+        self.mutate_cur_stack(|stack| stack.push(frame));
 
         ret(())
     }
@@ -528,74 +486,67 @@ The callee should probably start with a bunch of `Finalize` statements to ensure
 ### Become
 
 ```rust
+
 impl<M: Memory> Machine<M> {
     fn eval_terminator(&mut self, Terminator::Become { callee, arguments }: Terminator) -> NdResult {
-        // Evaluate the function that will be called.
-        let (Value::Ptr(ptr), _) = self.eval_value(callee)? else {
-            panic!("call on a non-pointer")
-        };
+        let call_expr = CallExpr { callee: CallTarget::Function(callee), arguments };
 
-        let func = self.fn_from_addr(ptr.addr)?;
+        // Evaluate the function and its arguments
+        let (func, mut locals) = self.eval_call_expr(call_expr)?;
 
-        let mut locals: Map<LocalName, Place<M>> = Map::new();
-
-        // If the new function may return, it needs the right ABI.
-        if let Some((callee_ret_local, callee_ret_abi)) = func.ret {
-            let old_frame = self.cur_frame();
-            let Some((caller_ret_local, caller_ret_abi)) = old_frame.func.ret else {
-                throw_ub!("non-returning function cannot become a function that may return");
-            };
-            if caller_ret_abi != callee_ret_abi {
-                throw_ub!("call ABI violation: return ABI does not agree");
-            }
-            // and pass the return place as its first local
-            locals.insert(callee_ret_local, old_frame.locals[caller_ret_local]);
-        }
-
-        // Evaluate all arguments and put them into fresh places
-        // to initialize the local variable assignment.
-        if func.args.len() != arguments.len() {
-            throw_ub!("call ABI violation: number of arguments does not agree");
-        }
-        for ((local, callee_abi), (arg, caller_abi)) in func.args.zip(arguments) {
-            if caller_abi != callee_abi {
-                throw_ub!("call ABI violation: argument ABI does not agree");
-            }
-            let (val, caller_ty) = self.eval_value(arg)?;
-            let callee_layout = func.locals[local].layout::<M>();
-            // Allocate place with callee layout (a lot like `StorageLive`).
-            let p = self.mem.allocate(callee_layout.size, callee_layout.align)?;
-            // Store value with caller type (otherwise we could get panics).
-            // The ABI above should ensure that this does not go OOB,
-            // and it is a fresh pointer so there should be no other reason this can fail.
-            self.mem.typed_store(Atomicity::None, p, val, PlaceType::new(caller_ty, callee_layout.align)).unwrap();
-            locals.insert(local, p);
-        }
-
-        // Replace the current stack frame with that of the new function.
-        let old_frame = self.mutate_cur_stack(
-            |stack| {
-                let old_frame = stack.pop().unwrap();
-                // Push new stack frame, so it is executed next.
-                stack.push(StackFrame {
-                    func,
-                    locals,
-                    caller_return_info: old_frame.caller_return_info,
-                    next_block: func.start,
-                    next_stmt: Int::ZERO,
-                });
-                old_frame
-            }
+        let mut frame = self.mutate_cur_stack(
+            |stack| stack.pop().unwrap()
         );
 
-        // Deallocate old locals, except possible return place which was given to the next function.
-        let ret_local = old_frame.func.ret.map(|x| x.0);
-        for (local, place) in old_frame.locals.into_iter().filter(|x| Some(x.0) != ret_local) {
-            // A lot like `StorageDead`.
-            let layout = old_frame.func.locals[local].layout::<M>();
-            self.mem.deallocate(place, layout.size, layout.align)?;
-        }
+        // If the new function can return, give it the return local from this function
+        let old_locals = &mut frame.locals;
+        self.prepare_return(
+            &mut locals,
+            func,
+            frame.func.ret.map(|(local, abi)| (abi, move || old_locals.remove(local).unwrap()))
+        )?;
 
+        let caller = self.deallocate_locals(frame)?;
+
+        // Push the new stack frame, so it is executed next.
+        let frame = StackFrame::new(func, locals, caller);
+        self.mutate_cur_stack(|stack| stack.push(frame));
+
+        ret(())
+    }
+
+    fn prepare_return(&mut self,
+        locals: &mut Map<LocalName,Place<M>>,
+        func: Function,
+        ret_place: Option<(ArgAbi, impl FnOnce() -> Place<M>)>,
+    ) -> NdResult {
+
+        if let Some((callee_ret_local, callee_ret_abi)) = func.ret {
+            let place = if let Some((caller_ret_abi, get_place)) = ret_place {
+                if callee_ret_abi != caller_ret_abi {
+                    throw_ub!("call ABI violation: return ABI does not agree");
+                }
+                get_place()
+            } else {
+                // We get here if calling/becoming a non-diverging function, and
+                // the function it returns to doesn't expect a return value, or
+                // there is no function to return to.
+
+                // TODO check if this makes sense when a diverging function
+                // becomes a non-diverging function (which might not be immediate
+                // UB, but only if the new function or some other function it
+                // becomes ever does return)
+                // Stongly suspect it is broken that way!
+
+                let layout = func.locals[callee_ret_local].layout::<M>();
+                self.mem.allocate(layout.size, layout.align)?
+
+                // Maybe we could forbid both calling a non-diverging function
+                // without providing a return place, and becoming a non-diverging
+                // function from a diverging function.
+            };
+            locals.insert(callee_ret_local, place);
+        }
         ret(())
     }
 }
@@ -606,41 +557,41 @@ impl<M: Memory> Machine<M> {
 ```rust
 impl<M: Memory> Machine<M> {
     fn eval_terminator(&mut self, Terminator::Return: Terminator) -> NdResult {
-        let frame = self.mutate_cur_stack(
+        let mut frame = self.mutate_cur_stack(
             |stack| stack.pop().unwrap()
         );
-        let func = frame.func;
 
-        let Some(caller_return_info) = frame.caller_return_info else {
+        // Ideally we could do this, but some of the current tests have functions
+        // on other threads that return without a return local, and that is
+        // accepted because it also terminates the thread.
+        if frame.func.ret.is_none() {
+            //throw_ub!("return from a function that does not have a return local");
+        }
+
+        if let Some(return_info) = frame.caller_return_info {
+            let Some((ret_local, _)) = frame.func.ret else {
+                throw_ub!("return from a function that does not have a return local");
+            };
+
+            // If there is a return local, we shouldn't deallocate it
+            if let Some(ret_place) = return_info.ret_place {
+                assert_eq!(ret_place.0, frame.locals.get(ret_local).unwrap());
+                assert_eq!(ret_place.1, frame.func.locals.get(ret_local).unwrap());
+                frame.locals.remove(ret_local);
+            }
+        }
+
+        let caller = self.deallocate_locals(frame)?;
+
+        let Some(return_info) = caller else {
             // Only the bottom frame in a stack has no caller.
-            // Therefore the thread must terminate now.
             assert_eq!(Int::ZERO, self.thread_manager.active_thread().stack.len());
 
+            // Therefore the thread must terminate now.
             return self.thread_manager.terminate_active_thread();
         };
 
-        let Some((ret_local, _)) = func.ret else {
-            throw_ub!("return from a function that does not have a return local");
-        };
-
-        // Copy return value, if any, to where the caller wants it.
-        // To make this work like an assignment in the caller, we use the caller type for this copy.
-        // FIXME: Should Call/Return also do a copy at *callee* type?
-        // On the other hand, the callee is done here, so why would it even still
-        // care about the return value?
-        if let Some((ret_place, ret_pty)) = caller_return_info.ret_place {
-            let ret_val = self.mem.typed_load(Atomicity::None, frame.locals[ret_local], ret_pty)?;
-            self.mem.typed_store(Atomicity::None, ret_place, ret_val, ret_pty)?;
-        }
-
-        // Deallocate everything.
-        for (local, place) in frame.locals {
-            // A lot like `StorageDead`.
-            let layout = func.locals[local].layout::<M>();
-            self.mem.deallocate(place, layout.size, layout.align)?;
-        }
-
-        if let Some(next_block) = caller_return_info.next_block {
+        if let Some(next_block) = return_info.next_block {
             self.mutate_cur_frame(|frame| {
                 frame.jump_to_block(next_block);
             });
@@ -649,6 +600,52 @@ impl<M: Memory> Machine<M> {
         }
 
         ret(())
+    }
+}
+```
+
+### Call expression
+
+Defines how the arguments to a function call are evaluated. See Terminator::Call
+above for actually performing the function call.
+
+```rust
+impl<M: Memory> Machine<M> {
+    fn eval_call_expr(&mut self, call_expr: CallExpr) -> NdResult<(Function, Map<LocalName, Place<M>>)> {
+        // Evaluate the function that will be called.
+        let func = match call_expr.callee {
+            CallTarget::Intrinsic(_) => todo!(),
+            CallTarget::Function(expr) => {
+                let val = self.eval_value(expr)?;
+                let (Value::Ptr(ptr), _) = val else {
+                    panic!("call on a non-pointer")
+                };
+                self.fn_from_addr(ptr.addr)?
+            }
+        };
+
+        let mut locals: Map<LocalName, Place<M>> = Map::new();
+
+        // Evaluate all arguments and put them into fresh places
+        // to initialize the local variable assignment.
+        if func.args.len() != call_expr.arguments.len() {
+            throw_ub!("call ABI violation: number of arguments does not agree");
+        }
+        for ((expected_arg, callee_abi), (arg_expr, caller_abi)) in func.args.zip(call_expr.arguments) {
+            if caller_abi != callee_abi {
+                throw_ub!("call ABI violation: argument ABI does not agree");
+            }
+            let (val, caller_ty) = self.eval_value(arg_expr)?;
+            let callee_layout = func.locals[expected_arg].layout::<M>();
+            // Allocate place with callee layout (a lot like `StorageLive`).
+            let p = self.mem.allocate(callee_layout.size, callee_layout.align)?;
+            // Store value with caller type (otherwise we could get panics).
+            // The ABI above should ensure that this does not go OOB,
+            // and it is a fresh pointer so there should be no other reason this can fail.
+            self.mem.typed_store(Atomicity::None, p, val, PlaceType::new(caller_ty, callee_layout.align)).unwrap();
+            locals.insert(expected_arg, p);
+        }
+        ret((func, locals))
     }
 }
 ```

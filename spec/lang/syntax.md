@@ -338,3 +338,18 @@ pub enum PlaceExpr {
     },
 }
 ```
+
+### Call expression
+
+```rust
+pub enum CallTarget {
+    Intrinsic(Intrinsic),
+    Function(ValueExpr),
+}
+
+/// A "call expression" evaluates to a function with its arguments evaluted.
+pub struct CallExpr {
+    pub callee: CallTarget,
+    pub arguments: List<(ValueExpr, ArgAbi)>,
+}
+```

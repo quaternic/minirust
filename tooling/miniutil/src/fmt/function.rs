@@ -125,18 +125,13 @@ fn fmt_statement(st: Statement, comptypes: &mut Vec<CompType>) -> String {
 
 // used both for functions and intrinsics.
 fn fmt_call(
-    callee: &str,
-    arguments: List<ValueExpr>,
+    callee: CallTarget,
+    arguments: List<(ValueExpr,ArgAbi)>,
     ret: Option<PlaceExpr>,
     next_block: Option<BbName>,
     comptypes: &mut Vec<CompType>,
 ) -> String {
-    // Format function args
-    let args: Vec<_> = arguments
-        .iter()
-        .map(|x| fmt_value_expr(x, comptypes).to_string())
-        .collect();
-    let args = args.join(", ");
+    let call_expr = fmt_call_expr(CallExpr {callee,arguments}, comptypes);
 
     // Format return place
     let r = match ret {
@@ -153,7 +148,7 @@ fn fmt_call(
         None => String::new(),
     };
 
-    format!("    {r} = {callee}({args}){next};")
+    format!("    {r} = {call_expr}{next};")
 }
 
 fn fmt_terminator(t: Terminator, comptypes: &mut Vec<CompType>) -> String {
@@ -187,26 +182,18 @@ fn fmt_terminator(t: Terminator, comptypes: &mut Vec<CompType>) -> String {
             ret,
             next_block,
         } => {
-            let callee = fmt_value_expr(callee, comptypes).to_atomic_string();
-            let arguments = arguments.iter().map(|(expr, _arg_abi)| expr).collect();
             let ret = ret.map(|(place_expr, _arg_abi)| place_expr);
-            fmt_call(&callee, arguments, ret, next_block, comptypes)
+            fmt_call(CallTarget::Function(callee), arguments, ret, next_block, comptypes)
         }
         Terminator::Become {
-            callee,
-            arguments,
+            callee,arguments
         } => {
             // FIXME since the corresponding syntax does not exist yet in rustc,
             // for the time being there is no support for parsing this Terminator
             // so this is just a placeholder to produce some readable output
-            let callee = fmt_value_expr(callee, comptypes).to_atomic_string();
-            let args: Vec<String> = arguments.iter()
-                .map(|(expr, _arg_abi)| expr)
-                .map(|x| fmt_value_expr(x, comptypes).to_string())
-                .collect();
-            let args = args.join(", ");
-
-            format!("    become {callee}({args});")
+            let call_expr = CallExpr{callee: CallTarget::Function(callee),arguments};
+            let call_expr = fmt_call_expr(call_expr, comptypes);
+            format!("    become {call_expr};")
         }
         Terminator::Return => {
             format!("    return;")
@@ -217,22 +204,8 @@ fn fmt_terminator(t: Terminator, comptypes: &mut Vec<CompType>) -> String {
             ret,
             next_block,
         } => {
-            let callee = match intrinsic {
-                Intrinsic::Exit => "exit",
-                Intrinsic::PrintStdout => "print",
-                Intrinsic::PrintStderr => "eprint",
-                Intrinsic::Allocate => "allocate",
-                Intrinsic::Deallocate => "deallocate",
-                Intrinsic::Spawn => "spawn",
-                Intrinsic::Join => "join",
-                Intrinsic::AtomicWrite => "atomic-write",
-                Intrinsic::AtomicRead => "atomic-read",
-                Intrinsic::CompareExchange => "compare-exchange",
-                Intrinsic::Lock(LockIntrinsic::Acquire) => "lock-acquire",
-                Intrinsic::Lock(LockIntrinsic::Create) => "lock-create",
-                Intrinsic::Lock(LockIntrinsic::Release) => "lock-release",
-            };
-            fmt_call(callee, arguments, ret, next_block, comptypes)
+            let arguments = arguments.map(|expr| (expr, ArgAbi::Register));
+            fmt_call(CallTarget::Intrinsic(intrinsic), arguments, ret, next_block, comptypes)
         }
     }
 }
