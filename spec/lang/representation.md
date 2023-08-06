@@ -120,7 +120,7 @@ impl Type {
             PtrType::Ref { pointee, mutbl: _ } | PtrType::Box { pointee } => {
                 // References (and `Box`) need to be non-null, aligned, and not point to an uninhabited type.
                 // (Think: uninhabited types have impossible alignment.)
-                ensure(ptr.addr != 0 && ptr.addr % pointee.align.bytes() == 0 && pointee.inhabited)?;
+                ensure(ptr.addr != 0 && is_aligned_for(ptr.addr, pointee.align) && pointee.inhabited)?;
             }
         }
         ret(Value::Ptr(ptr))

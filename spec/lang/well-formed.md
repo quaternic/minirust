@@ -296,7 +296,7 @@ impl PlaceExpr {
                     _ => throw!(),
                 };
                 PlaceType {
-                    align: root.align.restrict_for_offset(offset),
+                    align: root.align.constant_offset(offset),
                     ty: field_ty,
                 }
             }
@@ -308,11 +308,10 @@ impl PlaceExpr {
                     Type::Array { elem, .. } => elem,
                     _ => throw!(),
                 };
-                // We might be adding a multiple of `field_ty.size`, so we have to
-                // lower the alignment compared to `root`. `restrict_for_offset`
-                // is good for any multiple of that offset as well.
+                // We might be adding a multiple of `field_ty.size`, so we may
+                // have to lower the alignment compared to `root`.
                 PlaceType {
-                    align: root.align.restrict_for_offset(field_ty.size::<T>()),
+                    align: root.align.indexed_offset(field_ty.size::<T>()),
                     ty: field_ty,
                 }
             }

@@ -1,5 +1,7 @@
 use crate::*;
 
+use minirust_rs::prelude::Align;
+
 #[test]
 #[should_panic]
 fn impossible_align() { // TODO this should not actually panic!

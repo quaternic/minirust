@@ -96,13 +96,15 @@ impl<T: Target> Memory for BasicMemory<T> {
         let distr = libspecr::IntDistribution {
             start: Int::ONE,
             end: Int::from(2).pow(Self::T::PTR_SIZE.bits()),
-            divisor: align.bytes(),
+            divisor: align.modulus(),
         };
-        let addr = pick(distr, |addr: Address| {
+        let rem = align.remainder();
+        let addr = rem + pick(distr, |mut addr: Address| {
+            addr += rem;
             // Pick a strictly positive integer...
             if addr <= 0 { return false; }
             // ... that is suitably aligned...
-            if addr % align.bytes() != 0 { return false; }
+            if !is_aligned_for(addr, align) { return false; }
             // ... such that addr+size is in-bounds of a `usize`...
             if !(addr+size.bytes()).in_bounds(Unsigned, Self::T::PTR_SIZE) { return false; }
             // ... and it does not overlap with any existing live allocation.
@@ -168,7 +170,7 @@ impl<T: Target> BasicMemory<T> {
     /// offset; this can be missing for invalid pointers and accesses of size 0.
     fn check_ptr(&self, ptr: Pointer<AllocId>, len: Size, align: Align) -> Result<Option<(AllocId, Size)>> {
         // Alignment is always required.
-        if ptr.addr % align.bytes() != 0 {
+        if !is_aligned_for(ptr.addr, align) {
             throw_ub!("pointer is insufficiently aligned");
         }
         // For zero-sized accesses, this is enough.

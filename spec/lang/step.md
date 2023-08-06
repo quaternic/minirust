@@ -272,7 +272,7 @@ impl<M: Memory> Machine<M> {
         let ptype = PlaceType {
             // `offset` is statically known here (it is part of the field type)
             // so we are fine using it for `ptype`.
-            align: ptype.align.restrict_for_offset(offset),
+            align: ptype.align.constant_offset(offset),
             ty: field_ty,
         };
 
@@ -300,7 +300,7 @@ impl<M: Memory> Machine<M> {
         let ptype = PlaceType {
             // We do *not* use `offset` here since that is only dynamically known.
             // Instead use element size, which yields the lowest alignment.
-            align: ptype.align.restrict_for_offset(field_ty.size::<M::T>()),
+            align: ptype.align.indexed_offset(field_ty.size::<M::T>()),
             ty: field_ty,
         };
 
@@ -382,7 +382,9 @@ This statement replaces the contents of a place with `Uninit`.
 ```rust
 impl<M: Memory> Machine<M> {
     fn deinit(&mut self, place: Place<M>, pty: PlaceType) -> NdResult {
-        self.mem.store(place, list![AbstractByte::Uninit; pty.ty.size::<M::T>().bytes()], pty.align, Atomicity::None)?;
+        // deinitializing a place does not require it to be correctly aligned
+        let align = Align::ONE;
+        self.mem.store(place, list![AbstractByte::Uninit; pty.ty.size::<M::T>().bytes()], align, Atomicity::None)?;
         ret(())
     }
 

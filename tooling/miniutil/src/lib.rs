@@ -12,6 +12,7 @@ pub use minirust_rs::lang::*;
 pub use minirust_rs::mem::*;
 pub use minirust_rs::prelude::*;
 pub use minirust_rs::prelude::NdResult;
+pub use minirust_rs::prelude::Align;
 
 pub use std::format;
 pub use std::result::Result;
