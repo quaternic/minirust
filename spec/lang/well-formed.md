@@ -296,7 +296,7 @@ impl PlaceExpr {
                     _ => throw!(),
                 };
                 PlaceType {
-                    align: root.align.constant_offset(offset),
+                    align: root.align + Align::from_offset(offset.bytes()),
                     ty: field_ty,
                 }
             }
@@ -311,7 +311,7 @@ impl PlaceExpr {
                 // We might be adding a multiple of `field_ty.size`, so we may
                 // have to lower the alignment compared to `root`.
                 PlaceType {
-                    align: root.align.indexed_offset(field_ty.size::<T>()),
+                    align: root.align + Align::from_stride(field_ty.size::<T>().bytes()),
                     ty: field_ty,
                 }
             }

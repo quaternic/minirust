@@ -93,14 +93,11 @@ impl<T: Target> Memory for BasicMemory<T> {
         // meaning the program has to cope with every possible choice.
         // FIXME: This makes OOM (when there is no possible choice) into "no behavior",
         // which is not what we want.
-        let distr = libspecr::IntDistribution {
-            start: Int::ONE,
-            end: Int::from(2).pow(Self::T::PTR_SIZE.bits()),
-            divisor: align.modulus(),
-        };
-        let rem = align.remainder();
-        let addr = rem + pick(distr, |mut addr: Address| {
-            addr += rem;
+        let addr = align.pick(
+            Int::ONE,
+            Int::from(2).pow(Self::T::PTR_SIZE.bits()),
+            |addr: Address|
+        {
             // Pick a strictly positive integer...
             if addr <= 0 { return false; }
             // ... that is suitably aligned...

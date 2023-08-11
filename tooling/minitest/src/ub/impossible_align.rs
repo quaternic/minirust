@@ -5,8 +5,7 @@ use minirust_rs::prelude::Align;
 #[test]
 #[should_panic]
 fn impossible_align() { // TODO this should not actually panic!
-    let align = 2u128.pow(65);
-    let align = Align::from_bytes(align).unwrap();
+    let align = Align::from_stride(2u128.pow(65).into());
 
     let pty = ptype(<u8>::get_type(), align);
 

@@ -38,7 +38,7 @@ pub use ty_conv::*;
 
 pub fn align(bytes: impl Into<Int>) -> Align {
     let bytes = bytes.into();
-    Align::from_bytes(bytes).unwrap()
+    Align::from_stride(bytes)
 }
 
 pub fn size(bytes: impl Into<Int>) -> Size {

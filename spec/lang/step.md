@@ -272,7 +272,7 @@ impl<M: Memory> Machine<M> {
         let ptype = PlaceType {
             // `offset` is statically known here (it is part of the field type)
             // so we are fine using it for `ptype`.
-            align: ptype.align.constant_offset(offset),
+            align: ptype.align + Align::from_offset(offset.bytes()),
             ty: field_ty,
         };
 
@@ -300,7 +300,7 @@ impl<M: Memory> Machine<M> {
         let ptype = PlaceType {
             // We do *not* use `offset` here since that is only dynamically known.
             // Instead use element size, which yields the lowest alignment.
-            align: ptype.align.indexed_offset(field_ty.size::<M::T>()),
+            align: ptype.align + Align::from_stride(field_ty.size::<M::T>().bytes()),
             ty: field_ty,
         };
 

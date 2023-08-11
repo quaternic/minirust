@@ -237,5 +237,5 @@ fn translate_local<'tcx>(local: &rs::LocalDecl<'tcx>, tcx: rs::TyCtxt<'tcx>) -> 
 }
 
 pub fn translate_align(align: rs::Align) -> Align {
-    Align::from_bytes(align.bytes()).unwrap()
+    Align::from_stride(align.bytes().into())
 }

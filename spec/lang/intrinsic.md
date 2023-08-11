@@ -123,9 +123,10 @@ impl<M: Memory> Machine<M> {
             throw_ub!("invalid second argument to `Intrinsic::Allocate`");
         };
 
-        let Some(align) = Align::from_bytes(align) else {
+        if !align.is_power_of_two() {
             throw_ub!("invalid alignment for `Intrinsic::Allocate`: not a power of 2");
-        };
+        }
+        let align = Align::from_stride(align);
 
         if !matches!(ret_ty, Type::Ptr(_)) {
             throw_ub!("invalid return type for `Intrinsic::Allocate`")
@@ -160,9 +161,10 @@ impl<M: Memory> Machine<M> {
         let Value::Int(align) = arguments[2].0 else {
             throw_ub!("invalid third argument to `Intrinsic::Deallocate`");
         };
-        let Some(align) = Align::from_bytes(align) else {
+        if !align.is_power_of_two() {
             throw_ub!("invalid alignment for `Intrinsic::Deallocate`: not a power of 2");
-        };
+        }
+        let align = Align::from_stride(align);
 
         if !is_unit(ret_ty) {
             throw_ub!("invalid return type for `Intrinsic::Deallocate`")
@@ -268,7 +270,7 @@ impl<M: Memory> Machine<M> {
             throw_ub!("invalid return type for `Intrinsic::AtomicWrite`")
         }
 
-        let pty = PlaceType { ty, align: Align::from_bytes(size.bytes()).unwrap() };
+        let pty = PlaceType { ty, align: Align::from_stride(size.bytes()) };
         self.mem.typed_store(ptr, val, pty, Atomicity::Atomic)?;
         ret(unit_value())
     }
@@ -294,7 +296,7 @@ impl<M: Memory> Machine<M> {
             throw_ub!("invalid return type for `Intrinsic::AtomicRead`, size too big");
         }
 
-        let pty = PlaceType { ty: ret_ty, align: Align::from_bytes(size.bytes()).unwrap() };
+        let pty = PlaceType { ty: ret_ty, align: Align::from_stride(size.bytes()) };
         let val = self.mem.typed_load(ptr, pty, Atomicity::Atomic)?;
         ret(val)
     }
@@ -331,8 +333,8 @@ impl<M: Memory> Machine<M> {
         if size > M::T::MAX_ATOMIC_SIZE {
             throw_ub!("invalid return type for `Intrinsic::CompareExchange`, size to big");
         }
-        
-        let pty = PlaceType { ty: ret_ty, align: Align::from_bytes(size.bytes()).unwrap() };
+
+        let pty = PlaceType { ty: ret_ty, align: Align::from_stride(size.bytes()) };
 
         // The value at the location right now.
         let before = self.mem.typed_load(ptr, pty, Atomicity::Atomic)?;
